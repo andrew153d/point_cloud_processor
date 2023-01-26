@@ -1,0 +1,52 @@
+{
+    "artificialDelayMilliseconds": 700,
+    "keepExistingTerminalsOpen": false,
+    "runOnStartup": true,
+    "terminals": [
+      {
+        "splitTerminals": [
+          {
+            "name": "roscore",
+            "commands": ["cd ~/catkin_ws", "source devel/setup.bash", "roscore"]
+          }
+        ]
+      },
+      {
+        "splitTerminals": [
+          {
+            "name": "rosbag",
+            "color":"blue",
+            "commands": [
+              
+              "rosbag play --loop ~/Downloads/zed_point_cloud.bag"
+            ],
+            "shouldRunCommands": false
+          }
+        ]
+      },
+      {
+        "splitTerminals": [
+          {
+            "name": "catkin_make",
+            "commands": [
+              "cd ~/catkin_ws/",
+              "catkin_make"
+            ],
+            "shouldRunCommands": true
+          }
+        ]
+      },
+      {
+        "splitTerminals": [
+          {
+            "name": "run node",
+            "commands": [
+              "cd ~/catkin_ws/devel/lib/point_cloud_processor",
+              "./point_cloud_node"
+            ],
+            "shouldRunCommands": false
+          }
+        ]
+      }
+    ]
+  }
