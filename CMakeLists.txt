@@ -149,6 +149,7 @@ include_directories(
 
 ## Specify libraries to link a library or executable target against
  target_link_libraries(point_cloud_node
+ 
    ${catkin_LIBRARIES}
 )
 

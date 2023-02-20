@@ -11,6 +11,18 @@
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ros/ros.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/passthrough.h>
+#include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/features/normal_3d_omp.h>
+#include <pcl/segmentation/region_growing_rgb.h>
+#include <nav_msgs/OccupancyGrid.h>
+#include <pcl/filters/conditional_removal.h>
 
 ros::Publisher pub;
 ros::Publisher grid_cells_pub;
@@ -32,8 +44,27 @@ void cloud_callback(const sensor_msgs::PointCloud2::ConstPtr &msg)
   pass.setFilterLimits(-10, 0);
   // pass.setFilterLimitsNegative (true);
   pass.filter(cloud);
+
+  pcl::ConditionalRemoval<pcl::PointXYZRGBA> color_filter;
+
+ pcl::PackedRGBComparison<pcl::PointXYZRGBA>::Ptr red_condition(new pcl::PackedRGBComparison<pcl::PointXYZRGBA>("r", pcl::ComparisonOps::GT, 150));
+ pcl::PackedRGBComparison<pcl::PointXYZRGBA>::Ptr green_condition(new pcl::PackedRGBComparison<pcl::PointXYZRGBA>("g", pcl::ComparisonOps::GT, 150));
+ pcl::PackedRGBComparison<pcl::PointXYZRGBA>::Ptr blue_condition(new pcl::PackedRGBComparison<pcl::PointXYZRGBA>("b", pcl::ComparisonOps::GT, 150));
+
+ pcl::ConditionAnd<pcl::PointXYZRGBA>::Ptr color_cond (new pcl::ConditionAnd<pcl::PointXYZRGBA> ());
+ color_cond->addComparison (red_condition);
+ color_cond->addComparison (green_condition);
+ color_cond->addComparison (blue_condition);
+ 
+ // Build the filter
+ color_filter.setInputCloud(cloud.makeShared());
+ color_filter.setCondition (color_cond);
+ color_filter.filter(cloud);
+
+
+
   uint32_t blue = (static_cast<uint32_t>(0) << 16) | (static_cast<uint32_t>(0) << 8) | static_cast<uint32_t>(255);
-  for (auto point : cloud.points)
+  /*for (auto point : cloud.points)
   {
     // std::cout << "hi" << (point.r + point.g + point.b) / 3 << std::endl;
     if ((point.r + point.g + point.b) / 3 < 250)
@@ -41,7 +72,7 @@ void cloud_callback(const sensor_msgs::PointCloud2::ConstPtr &msg)
 
       point.rgb = blue;
     }
-  }
+  }*/
 
   // cloud.points.erase(std::remove_if(cloud.points.begin(), cloud.points.end(), [](const pcl::PointXYZRGBA &point)
   //                                  { return (point.r + point.g + point.b) / 3 < 100; }),
@@ -84,7 +115,7 @@ int main(int argc, char **argv)
 
   pub = nh.advertise<sensor_msgs::PointCloud2>("output", 1);
   grid_cells_pub = nh.advertise<nav_msgs::GridCells>("grid_cells", 10);
-  ros::Subscriber cloud_sub = nh.subscribe("/zed2/zed_node/point_clo1", 1, cloud_callback);
+  ros::Subscriber cloud_sub = nh.subscribe("/zed2/zed_node/point_cloud/cloud_registered", 1, cloud_callback);
 
   ros::spin();
   return 0;
