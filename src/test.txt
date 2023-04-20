@@ -1,0 +1,389 @@
+#include <ros/ros.h>
+#include <ros/types.h>
+#include <math.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/PointField.h>
+#include <geometry_msgs/Vector3Stamped.h>
+#include <geometry_msgs/QuaternionStamped.h>
+#include <geometry_msgs/TwistStamped.h>
+#include <std_msgs/String.h>
+#include "visualization_msgs/Marker.h"
+#include <tf2/LinearMath/Quaternion.h>
+
+#include <pcl/point_types.h>
+#include <pcl/impl/point_types.hpp>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl_ros/point_cloud.h>
+#include <pcl_ros/filters/voxel_grid.h>
+#include <pcl_ros/filters/filter.h>
+#include <pcl_ros/filters/extract_indices.h>
+//#include <pcl_ros/filters/filter_indices.h>
+#include <pcl_ros/filters/passthrough.h>
+#include "pcl/impl/point_types.hpp"
+#include <nav_msgs/Path.h>
+
+// also included visualization_msgs, geometry_msgs
+// the following values are weird because transforms are messed up
+// These work for RTK for the 06/22/22 demo
+float filterZmin=-3.5; // see if this improves visibliity of objects near ground
+// float filterZmin=-1.25;
+float filterZmax=-1.0;
+
+// The following is a hack. This information should really be subject to
+// frames of reference
+float imuYoffset=0.0; // the IMU is 0.37m to the left of center
+float imuXoffset=0.0; // the IMU in front of center of vehicle, should be positive
+
+ros::Publisher *pcl_pub  ;
+ros::Publisher *  pcl_intensities;
+ros::Publisher *  pcl_filterY;
+//ros::Publisher *  pcl_filterX ;
+ros::Publisher *  pcl_filterZ ;
+//ros::Publisher *  pcl_filterYagain;
+ros::Publisher *  pcl_filterXfront;
+//ros::Publisher *  pcl_filterYshell;
+
+double timeHorizon=20.0; // 10 seconds
+// double timeHorizon=10.0; // 10 seconds
+
+
+#define DEBUG 0
+void velodyneCallback(const sensor_msgs::PointCloud2::ConstPtr& scan) {
+  int ch='a';
+  if(DEBUG) printf("%c\n",ch++); fflush(stdout); // a
+  sensor_msgs::PointField field;
+  struct lidarPoint {float x,y,z,intensity; uint16_t ring;};
+
+  // now try to get a couple of points from the point cloud. The collection of fields implies a
+  int pointIndex=0;
+  struct lidarPoint point;
+  union char_to_float {char buf[4]; float f;uint16_t s[2];};
+  union char_to_float fbuf;
+
+  if(DEBUG) printf("%c\n",ch++); fflush(stdout); // b
+  // not clear whethr this segment is doing anything tangible other than being able to compile
+  pcl::PCLPointCloud2* cloud = new pcl::PCLPointCloud2;
+  pcl::PCLPointCloud2ConstPtr cloudPtr(cloud);
+  pcl::PCLPointCloud2 cloud_filtered;
+  pcl_conversions::toPCL(*scan, *cloud);	     
+  pcl::VoxelGrid<pcl::PCLPointCloud2> sor;
+  sor.setInputCloud (cloudPtr);
+  sor.setLeafSize (0.1, 0.1, 0.1);
+  sor.filter (cloud_filtered);
+  sensor_msgs::PointCloud2 output;
+  pcl_conversions::moveFromPCL(cloud_filtered, output);
+  
+
+  if(DEBUG) printf("%c\n",ch++); fflush(stdout); // c
+  // PCLPointCloud2 declarations
+  pcl::PCLPointCloud2* cloud1 = new pcl::PCLPointCloud2;
+  pcl::PCLPointCloud2ConstPtr cloudPtr1(cloud1);
+  // insert our PointCloud into the PCLPointCloud
+  pcl_conversions::toPCL(*scan, *cloud1);	     
+
+  //pcl::PassThrough<pcl::PointXYZ> ptfilter (true);
+  // Initializing with true will allow us to extract the removed indices
+  // initialize to extract removed indices (?)
+  pcl::PassThrough<pcl::PCLPointCloud2> ptfilter (true);
+  ptfilter.setInputCloud (cloudPtr1);
+
+  // FILTER INTENSITIES
+  if(DEBUG) printf("%c\n",ch++); fflush(stdout); // d
+  // filter by intensity, only take high intensity points
+  ptfilter.setFilterFieldName ("intensity");
+  ptfilter.setFilterLimits (50.0/255.0,1.0);
+  // ptfilter.setFilterLimits ( 50.0,255.0);
+  pcl:cloudIntensi:PCLPointCloud2 ties;
+  ptfilter.filter (cloudIntensities);
+
+  pcl::PCLPointCloud2* cloud_for_filterY = new pcl::PCLPointCloud2(cloudIntensities);
+  pcl::PCLPointCloud2ConstPtr cloud_for_filterY_ptr(cloud_for_filterY);
+  
+  sensor_msgs::PointCloud2 filterIntensities;
+  pcl_conversions::moveFromPCL(cloudIntensities, filterIntensities);
+  pcl_intensities->publish (filterIntensities);
+ 
+  if(DEBUG) printf("%c\n",ch++); fflush(stdout); // e
+  // first filter by X, Y 
+  // now clip points on rack
+  // duplicate the PointCloud with high intensities
+  // (need to determine whether this is necessary for each step)
+  // (could explain why the current scan shows only this)
+  //pcl::PCLPointCloud2* cloud_i_dup = new pcl::PCLPointCloud2(cloud_i);
+  //pcl::PCLPointCloud2ConstPtr cloud_i_ptr(cloud_i_dup);
+
+
+  // FILTER Y
+  if(DEBUG) printf("%c\n",ch++); fflush(stdout); // f
+  // filter by y-- 2 meters to the left and right 
+  ptfilter.setInputCloud(cloud_for_filterY_ptr);  
+  ptfilter.setFilterFieldName ("y");
+  ptfilter.setFilterLimits (-2, 2);
+  ptfilter.setFilterLimitsNegative (false); // should this be false?
+  pcl::PCLPointCloud2 cloudFilterY;
+  ptfilter.filter (cloudFilterY);
+  sensor_msgs::PointCloud2 filterY;
+
+  pcl::PCLPointCloud2* cloud_for_filterX = new pcl::PCLPointCloud2(cloudFilterY);
+  pcl::PCLPointCloud2ConstPtr cloud_for_filterX_ptr(cloud_for_filterX);
+  
+  pcl_conversions::moveFromPCL(cloudFilterY, filterY);
+  pcl_filterY->publish (filterY);
+
+
+  // FILTER X FRONT
+  
+  // it may be that the following filters are necessary:
+  // 1. intensity
+  // 2. Y for lane
+  // 3. X for distance
+  // 4. Z for height
+  if(DEBUG) printf("%c\n",ch++); fflush(stdout);
+  // filter in the forward direction
+  ptfilter.setInputCloud(cloud_for_filterX_ptr);  
+  // ptfilter.setInputCloud(cloud_for_filterXfront_ptr);  
+  ptfilter.setFilterFieldName ("x");
+  ptfilter.setFilterLimits (0.75,10.0);
+  // ptfilter.setFilterLimits (0.75,5.0);
+  ptfilter.setFilterLimitsNegative (false);
+  // ptfilter.setFilterLimitsNegative (false);
+  pcl::PCLPointCloud2 cloudFilterX;
+  ptfilter.filter (cloudFilterX);
+
+  pcl::PCLPointCloud2* cloud_for_filterZ = new pcl::PCLPointCloud2(cloudFilterX);
+  pcl::PCLPointCloud2ConstPtr cloud_for_filterZ_ptr(cloud_for_filterZ);
+  
+  sensor_msgs::PointCloud2 filterX;
+  pcl_conversions::moveFromPCL(cloudFilterX, filterX);
+  pcl_filterXfront->publish (filterX);
+
+  // FILTER Z
+
+  // filter out the ground and the trees
+  ptfilter.setInputCloud(cloud_for_filterZ_ptr);  
+  ptfilter.setFilterFieldName ("z");
+  // standard curb height is about 0.3 meters
+  // not sure, but it looks like the raw data is received. Not clear the
+  // positional transform on the velodyne has been applied at this point
+  ptfilter.setFilterLimits (filterZmin,filterZmax); // only consider between 0.5 and 2.5 meters in height
+  // ptfilter.setFilterLimits (0.75,5.0);
+  ptfilter.setFilterLimitsNegative (false);
+  // ptfilter.setFilterLimitsNegative (false);
+  pcl::PCLPointCloud2 cloudFilterZ;
+  ptfilter.filter (cloudFilterZ);
+
+  sensor_msgs::PointCloud2 filterZ;
+  pcl_conversions::moveFromPCL(cloudFilterZ, filterZ);
+  pcl_filterZ->publish (filterZ);
+}
+
+
+int haveAccel=0;
+int haveTwist=0;
+int haveVelocity=0;
+
+geometry_msgs::Vector3Stamped free_acceleration=geometry_msgs::Vector3Stamped();
+geometry_msgs::TwistStamped twist=geometry_msgs::TwistStamped();
+geometry_msgs::Vector3Stamped velocity=geometry_msgs::Vector3Stamped();
+geometry_msgs::QuaternionStamped quaternion=geometry_msgs::QuaternionStamped();
+
+ros::Publisher * estimatedPath_pub;
+
+void publishEstimatedPath() {
+  // given velocity--estimate path up to 5 seconds in the future
+  nav_msgs::Path path;
+  ros::Time current_time = ros::Time::now();
+  
+  double timeStep=0.1;
+  ros::Duration dt(timeStep);
+  
+  double x,y,z;
+  double dx,dy,dz;
+  double v_x,v_y,v_z;
+  double a_x,a_y,a_z;
+  double ta_x,ta_y,ta_z;
+  double tl_x,tl_y,tl_z;
+  double yaw,dyaw;
+
+  if(haveVelocity) {
+    v_x=velocity.vector.x;
+    v_y=velocity.vector.y;
+    v_z=velocity.vector.z;
+  } else {
+    v_x=0;
+    v_y=0;
+    v_z=0;
+  }
+  
+  if(haveAccel) {
+    a_x=free_acceleration.vector.x;
+    a_y=free_acceleration.vector.y;
+    a_z=free_acceleration.vector.z;
+  } else {
+    a_x=0;
+    a_y=0;
+    a_z=0;
+  }
+  
+  if(haveTwist) {
+    ta_x=twist.twist.angular.x;
+    ta_y=twist.twist.angular.y;
+    ta_z=twist.twist.angular.z;
+
+    // is the following different from velocity?
+    tl_x=twist.twist.linear.x;
+    tl_y=twist.twist.linear.y;
+    tl_z=twist.twist.linear.z;
+  } else {
+    ta_x=0;
+    ta_y=0;
+    ta_z=0;
+
+    tl_x=0;
+    tl_y=0;
+    tl_z=0;
+  }
+
+  
+  path.header.stamp=current_time;
+  path.header.frame_id=std::string("map");
+
+  int invalidYaw=1;
+  geometry_msgs::PoseStamped prevPose;
+  //for(int i=0;i<round(5.0/timeStep);i++) {
+  for(int i=0;i<round(timeHorizon/timeStep);i++) {
+    //if(abs(ta_z)<0.0029) break;
+    if(abs(ta_z)==0) break;
+    invalidYaw=0;
+    geometry_msgs::PoseStamped pose;
+    pose.header.stamp=current_time;
+    pose.header.frame_id=std::string("map");
+    if(i==0) {
+      // current position is 0,0,0, quaternion is 0 0 0 1
+      pose.header.stamp=current_time;
+      pose.pose.position.x=imuXoffset;
+      pose.pose.position.y=imuYoffset;
+      pose.pose.position.z=0;      
+      pose.pose.orientation.w=1;
+      pose.pose.orientation.x=0;
+      pose.pose.orientation.y=0;
+      pose.pose.orientation.z=0;
+      yaw=0;
+    } else {
+      // use prevPose for time, position, and angle
+      ros::Time prev_time = prevPose.header.stamp;
+      double x,y,z;
+
+      x=prevPose.pose.position.x;
+      y=prevPose.pose.position.y;
+      z=prevPose.pose.position.z;
+
+      pose.header.stamp=prevPose.header.stamp+dt;
+      yaw+=ta_z*timeStep;
+
+      // dx is starting velocity + acceleration
+      dx=(sqrt(v_x*v_x+v_y*v_y))*timeStep; // x is forward, dy, dz are zero
+      //dx=(sqrt(tl_x*tl_x+tl_y*tl_y)); // x is forward, dy, dz are zero
+      // acceleration does not really make sense yet
+      //dx=(sqrt(tl_x*tl_x+tl_y*tl_y))*timeStep+(i*timeStep*(sqrt(a_x*a_x+a_y*a_y))); // x is forward, dy, dz are zero
+      pose.pose.position.x=x+dx*cos(yaw);
+      pose.pose.position.y=y+dx*sin(yaw);
+      pose.pose.position.z=0;
+      // convert yaw to quaternion
+      tf2::Quaternion tf2Quaternion;
+      tf2Quaternion.setRPY( 0, 0, yaw );
+      pose.pose.orientation.w=tf2Quaternion.w();
+      pose.pose.orientation.x=tf2Quaternion.x();
+      pose.pose.orientation.y=tf2Quaternion.y();
+      pose.pose.orientation.z=tf2Quaternion.z();
+    }
+    path.poses.push_back(pose); // add new pose to path
+    prevPose=pose;
+  }
+  if(!invalidYaw) estimatedPath_pub->publish(path);  
+}
+void xsensFreeAccelerationCallback(const geometry_msgs::Vector3Stamped::ConstPtr& msg) {
+  free_acceleration=geometry_msgs::Vector3Stamped(*msg);
+  haveAccel=1;
+  publishEstimatedPath();
+}
+
+void xsensTwistCallback(const geometry_msgs::TwistStamped::ConstPtr& msg) {
+  twist=geometry_msgs::TwistStamped(*msg);
+  haveTwist=1;
+  publishEstimatedPath();
+}
+
+void xsensVelocityCallback(const geometry_msgs::Vector3Stamped::ConstPtr& msg) {
+  velocity=geometry_msgs::Vector3Stamped(*msg);
+  haveVelocity=1;
+  publishEstimatedPath();
+}
+
+void xsensQuaternionCallback(const geometry_msgs::QuaternionStamped::ConstPtr& msg) {
+   quaternion=geometry_msgs::QuaternionStamped(*msg);
+}
+
+// subscribe to filter/twist, filter/velocity, filter/free_acceleration
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "process_lidar_node");
+  if(DEBUG) for(int i=0;i<argc;i++) {
+    printf("%d: %s\n",i,argv[i]);
+  }
+  ros::NodeHandle n;
+  //marker_pub = new ros::Publisher(n.advertise<visualization_msgs::Marker>("visualization_marker", 10));
+
+
+  std::string lidar_topic=std::string("/velodyne_points");
+  if(argc>0) {
+    lidar_topic=std::string(argv[1]);
+  }
+  printf("subscribing to topic %s\n",lidar_topic.c_str());
+  ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2>(lidar_topic, 1000, velodyneCallback);
+  ros::Subscriber sub_free_acceleration=n.subscribe<geometry_msgs::Vector3Stamped>("filter/free_acceleration", 1000,xsensFreeAccelerationCallback);
+  ros::Subscriber sub_quaternion=n.subscribe<geometry_msgs::QuaternionStamped>("filter/quaternion", 1000,xsensQuaternionCallback);
+  ros::Subscriber sub_twist=n.subscribe<geometry_msgs::TwistStamped>("filter/twist", 1000,xsensTwistCallback);
+  ros::Subscriber sub_velocity=n.subscribe<geometry_msgs::Vector3Stamped>("filter/velocity", 1000,xsensVelocityCallback);
+
+
+  
+  // ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 1000, velodyneCallback);
+  
+  pcl_pub =          new ros::Publisher(n.advertise<sensor_msgs::PointCloud2>("/velodyne_processed", 10));
+  pcl_intensities =  new ros::Publisher(n.advertise<sensor_msgs::PointCloud2>("/velodyne_filterIntensities", 10));
+  pcl_filterY =      new ros::Publisher(n.advertise<sensor_msgs::PointCloud2>("/velodyne_filterY", 10));
+  //pcl_filterX =      new ros::Publisher(n.advertise<sensor_msgs::PointCloud2>("/velodyne_filterX", 10));
+  pcl_filterZ =      new ros::Publisher(n.advertise<sensor_msgs::PointCloud2>("/velodyne_filterZ", 10));
+  // pcl_filterYagain = new ros::Publisher(n.advertise<sensor_msgs::PointCloud2>("/velodyne_filterYagain", 10));
+  pcl_filterXfront = new ros::Publisher(n.advertise<sensor_msgs::PointCloud2>("/velodyne_filterXfront", 10));
+  //pcl_filterYshell = new ros::Publisher(n.advertise<sensor_msgs::PointCloud2>("/velodyne_filterYshell", 10));
+
+  estimatedPath_pub = new ros::Publisher(n.advertise<nav_msgs::Path>("estimatedPath", 10));
+
+
+  // need the IMU and GPS to correct for changes in orientation of vehicle
+  // can attempt to use IMU to infer position by dead reckoning
+  // can use magnetic north to correct for IMU drift in orientation
+  // can clip pointcloud to focus at sign level
+
+  // use transforms to correct lidar data to map coordinates
+
+  // need to create launch file that starts everything up
+
+  //
+						   
+
+  ros::Rate r(30);
+
+  float f = 0.0;
+  while (ros::ok())  {
+    ros::spinOnce();
+    r.sleep();
+
+    f += 0.04;
+  }
+  ros::spin();
+
+  return 0;
+}

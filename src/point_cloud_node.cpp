@@ -122,10 +122,10 @@ void cloud_callback(const sensor_msgs::PointCloud2::ConstPtr &msg)
   map.header.frame_id = "base_link";
   map.info.map_load_time = ros::Time::now();
   map.info.resolution = 0.1;         // set your desired resolution
-  map.info.width = 50;               // set your desired width
-  map.info.height = 50;              // set your desired height
+  map.info.width = 100;               // set your desired width
+  map.info.height = 100;              // set your desired height
   map.info.origin.position.x = 0;    // set your desired origin position
-  map.info.origin.position.y = -2.5; // set your desired origin position
+  map.info.origin.position.y = -5; // set your desired origin position
   map.info.origin.position.z = 0;    // set your desired origin position
   map.info.origin.orientation.w = 1.0;
   map.data.resize(map.info.width * map.info.height);
@@ -133,17 +133,14 @@ void cloud_callback(const sensor_msgs::PointCloud2::ConstPtr &msg)
   {
     map.data[i] = -1;
   }
-  for (int i = 0; i < 50; i++)
-  {
-    map.data[i] = i * 2;
-  }
+  
   for (auto point : cloud.points)
   {
     int px = (int)(point.x / 0.1);
-    int py = ((int)((point.y + 2.5) / 0.1));
-    int i = px + 50 * py;
+    int py = ((int)((point.y + 5) / 0.1));
+    int i = px + 100 * py;
     // printf("point %d, %d \n", px, py);
-    if (i < 50 * 50 and i > 0)
+    if (i < 100 * 100 and i > 0)
     {
       map.data[i]++;
       if (map.data[i] > 100)
@@ -154,7 +151,7 @@ void cloud_callback(const sensor_msgs::PointCloud2::ConstPtr &msg)
   }
 
   for(int i = 0; i<map.data.size(); i++){
-    map.data[i]= (map.data[i]>70)? 100 : 0;
+    map.data[i]= (map.data[i]>20)? 0 : 100;
   }
   
   cost_map_pub.publish(map);
@@ -167,11 +164,9 @@ int main(int argc, char **argv)
 
   ros::Subscriber cloud_sub = nh.subscribe("/zed2/zed_node/point_cloud/cloud_registered", 1, cloud_callback);
 
-  
-  cost_map_pub = nh.advertise<nav_msgs::OccupancyGrid>("filter/cost_map", 1);
-  
-  pub = nh.advertise<sensor_msgs::PointCloud2>("filter/output", 1);
   obstaclePub = nh.advertise<sensor_msgs::PointCloud2>("filter/obstacles", 1);
+  cost_map_pub = nh.advertise<nav_msgs::OccupancyGrid>("filter/cost_map", 1);
+  pub = nh.advertise<sensor_msgs::PointCloud2>("filter/white_lines", 1);
   
   ros::spin();
   return 0;
